@@ -1,12 +1,15 @@
 .env
+.nodifyctx/
 .repocontext/
 .venv/
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+.coverage
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.egg-info/
 .idea/
 .vscode/

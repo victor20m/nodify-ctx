@@ -2,21 +2,47 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
+import os
 from pathlib import Path
 import re
 from typing import Any
-import os
 
 from neo4j import GraphDatabase
-from openai import OpenAI
+from openai import APIConnectionError, APITimeoutError, OpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, PointStruct, VectorParams
 
-from parser import CodeParser
+from .parser import CodeParser
 
 
-DEFAULT_QDRANT_COLLECTION_PREFIX = "repo_context_nodes"
+DEFAULT_QDRANT_COLLECTION_PREFIX = "nodify_ctx_nodes"
 _COLLECTION_SEGMENT_PATTERN = re.compile(r"[^a-z0-9]+")
+
+
+class EmbeddingsServiceError(RuntimeError):
+    """Raised when the configured embeddings endpoint cannot be reached."""
+
+
+def _env(name: str, default: str | None = None, *, legacy_name: str | None = None) -> str | None:
+    value = os.getenv(name)
+    if value is not None:
+        return value
+    if legacy_name is not None:
+        legacy_value = os.getenv(legacy_name)
+        if legacy_value is not None:
+            return legacy_value
+    return default
+
+
+def _env_float(name: str, default: float, *, legacy_name: str | None = None) -> float:
+    raw_value = _env(name, legacy_name=legacy_name)
+    if raw_value is None or not raw_value.strip():
+        return default
+
+    value = float(raw_value)
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than 0.")
+    return value
 
 
 def _normalize_repository_path(repository_path: str | Path) -> str:
@@ -43,30 +69,39 @@ def build_qdrant_collection_name(collection_id: str) -> str:
 
 @dataclass(slots=True)
 class GraphStoreConfig:
-    repository_path: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_REPOSITORY_PATH", "."))
-    collection_id: str | None = field(default_factory=lambda: os.getenv("REPOCONTEXT_COLLECTION_ID") or None)
-    neo4j_uri: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_NEO4J_URI", "bolt://localhost:7687"))
-    neo4j_username: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_NEO4J_USERNAME", "neo4j"))
-    neo4j_password: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_NEO4J_PASSWORD", "neo4j"))
-    qdrant_url: str | None = field(default_factory=lambda: os.getenv("REPOCONTEXT_QDRANT_URL") or None)
-    qdrant_path: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_QDRANT_PATH", ".repocontext/qdrant"))
-    qdrant_collection: str | None = field(default_factory=lambda: os.getenv("REPOCONTEXT_QDRANT_COLLECTION") or None)
+    repository_path: str = field(default_factory=lambda: _env("NODIFYCTX_REPOSITORY_PATH", ".", legacy_name="REPOCONTEXT_REPOSITORY_PATH") or ".")
+    collection_id: str | None = field(default_factory=lambda: _env("NODIFYCTX_COLLECTION_ID", legacy_name="REPOCONTEXT_COLLECTION_ID") or None)
+    neo4j_uri: str = field(default_factory=lambda: _env("NODIFYCTX_NEO4J_URI", "bolt://localhost:7687", legacy_name="REPOCONTEXT_NEO4J_URI") or "bolt://localhost:7687")
+    neo4j_username: str = field(default_factory=lambda: _env("NODIFYCTX_NEO4J_USERNAME", "neo4j", legacy_name="REPOCONTEXT_NEO4J_USERNAME") or "neo4j")
+    neo4j_password: str = field(default_factory=lambda: _env("NODIFYCTX_NEO4J_PASSWORD", "neo4j", legacy_name="REPOCONTEXT_NEO4J_PASSWORD") or "neo4j")
+    qdrant_url: str | None = field(default_factory=lambda: _env("NODIFYCTX_QDRANT_URL", legacy_name="REPOCONTEXT_QDRANT_URL") or None)
+    qdrant_path: str = field(default_factory=lambda: _env("NODIFYCTX_QDRANT_PATH", ".nodifyctx/qdrant", legacy_name="REPOCONTEXT_QDRANT_PATH") or ".nodifyctx/qdrant")
+    qdrant_collection: str | None = field(default_factory=lambda: _env("NODIFYCTX_QDRANT_COLLECTION", legacy_name="REPOCONTEXT_QDRANT_COLLECTION") or None)
     embeddings_base_url: str = field(
         default_factory=lambda: os.getenv(
-            "REPOCONTEXT_EMBEDDINGS_BASE_URL",
-            os.getenv("REPOCONTEXT_LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1"),
+            "NODIFYCTX_EMBEDDINGS_BASE_URL",
+            _env("REPOCONTEXT_EMBEDDINGS_BASE_URL", legacy_name="NODIFYCTX_LMSTUDIO_BASE_URL")
+            or _env("NODIFYCTX_LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1", legacy_name="REPOCONTEXT_LMSTUDIO_BASE_URL"),
         )
     )
     model_api_key: str = field(
         default_factory=lambda: os.getenv(
-            "REPOCONTEXT_MODEL_API_KEY",
-            os.getenv("REPOCONTEXT_LMSTUDIO_API_KEY", "lm-studio"),
+            "NODIFYCTX_MODEL_API_KEY",
+            _env("REPOCONTEXT_MODEL_API_KEY", legacy_name="NODIFYCTX_LMSTUDIO_API_KEY")
+            or _env("NODIFYCTX_LMSTUDIO_API_KEY", "lm-studio", legacy_name="REPOCONTEXT_LMSTUDIO_API_KEY"),
         )
     )
     embedding_model: str = field(
         default_factory=lambda: os.getenv(
-            "REPOCONTEXT_EMBEDDING_MODEL",
-            "text-embedding-nomic-embed-text-v1.5",
+            "NODIFYCTX_EMBEDDING_MODEL",
+            _env("REPOCONTEXT_EMBEDDING_MODEL") or "text-embedding-nomic-embed-text-v1.5",
+        )
+    )
+    model_timeout_seconds: float = field(
+        default_factory=lambda: _env_float(
+            "NODIFYCTX_MODEL_TIMEOUT_SECONDS",
+            10.0,
+            legacy_name="REPOCONTEXT_MODEL_TIMEOUT_SECONDS",
         )
     )
 
@@ -98,6 +133,7 @@ class KnowledgeGraphBuilder:
         self.embedding_client = OpenAI(
             base_url=self.config.embeddings_base_url,
             api_key=self.config.model_api_key,
+            timeout=self.config.model_timeout_seconds,
         )
         self._ensure_graph_schema()
 
@@ -117,13 +153,13 @@ class KnowledgeGraphBuilder:
             self._clear_graph()
             self._recreate_collection()
 
-        first_embedding = self.embed_text(entities[0]["raw_code"])
+        first_embedding = self.embed_text(self._embedding_text_for_entity(entities[0]))
         self._ensure_collection(vector_size=len(first_embedding))
 
         points: list[PointStruct] = []
         with self.neo4j.session() as session:
             for index, entity in enumerate(entities):
-                embedding = first_embedding if index == 0 else self.embed_text(entity["raw_code"])
+                embedding = first_embedding if index == 0 else self.embed_text(self._embedding_text_for_entity(entity))
                 self._upsert_entity_node(session, entity)
                 points.append(
                     PointStruct(
@@ -158,11 +194,32 @@ class KnowledgeGraphBuilder:
     def embed_text(self, text: str) -> list[float]:
         if not text.strip():
             raise ValueError("Embedding input must not be empty.")
-        response = self.embedding_client.embeddings.create(
-            model=self.config.embedding_model,
-            input=[text],
-        )
+        try:
+            response = self.embedding_client.embeddings.create(
+                model=self.config.embedding_model,
+                input=[text],
+            )
+        except (APITimeoutError, APIConnectionError) as exc:
+            raise EmbeddingsServiceError(
+                "Unable to reach the embeddings service at "
+                f"'{self.config.embeddings_base_url}'. Neo4j connectivity was verified successfully, "
+                "so this is not a Neo4j failure. Check that your OpenAI-compatible server is running, "
+                f"that NODIFYCTX_EMBEDDINGS_BASE_URL points to the right host, and that the embedding model "
+                f"'{self.config.embedding_model}' is available. If this repository is already indexed, rerun "
+                "with --skip-index."
+            ) from exc
         return list(response.data[0].embedding)
+
+    @staticmethod
+    def _embedding_text_for_entity(entity: dict[str, Any]) -> str:
+        raw_code = str(entity.get("raw_code", ""))
+        if raw_code.strip():
+            return raw_code
+
+        entity_type = str(entity.get("type", "entity"))
+        qualified_name = str(entity.get("qualified_name") or entity.get("name") or "unknown")
+        file_path = str(entity.get("file_path") or ".")
+        return f"{entity_type} {qualified_name} in {file_path}"
 
     def close(self) -> None:
         self.qdrant.close()
@@ -190,19 +247,29 @@ class KnowledgeGraphBuilder:
         with self.neo4j.session() as session:
             session.run(
                 """
+                DROP CONSTRAINT nodify_ctx_node_id IF EXISTS
+                """
+            )
+            session.run(
+                """
                 DROP CONSTRAINT repo_context_node_id IF EXISTS
                 """
             )
             session.run(
                 """
-                CREATE CONSTRAINT repo_context_node_repo_id IF NOT EXISTS
+                CREATE CONSTRAINT nodify_ctx_node_repo_id IF NOT EXISTS
                 FOR (node:CodeEntity)
                 REQUIRE (node.repo_id, node.node_id) IS UNIQUE
                 """
             )
             session.run(
                 """
-                CREATE INDEX repo_context_node_repo_name IF NOT EXISTS
+                DROP INDEX repo_context_node_name IF EXISTS
+                """
+            )
+            session.run(
+                """
+                CREATE INDEX nodify_ctx_node_repo_name IF NOT EXISTS
                 FOR (node:CodeEntity)
                 ON (node.repo_id, node.name)
                 """
@@ -234,7 +301,8 @@ class KnowledgeGraphBuilder:
         label = self._neo4j_label(entity["type"])
         session.run(
             f"""
-            MERGE (node:CodeEntity:{label} {{repo_id: $repo_id, node_id: $node_id}})
+            MERGE (node:CodeEntity {{repo_id: $repo_id, node_id: $node_id}})
+            SET node:{label}
             SET node.repo_id = $repo_id,
                 node.name = $name,
                 node.type = $type,
@@ -261,7 +329,7 @@ class KnowledgeGraphBuilder:
             f"""
             MATCH (source:CodeEntity {{repo_id: $repo_id, node_id: $source_id}})
             MATCH (target:CodeEntity {{repo_id: $repo_id, node_id: $target_id}})
-            MERGE (source)-[edge:{relationship["type"]}]->(target)
+            MERGE (source)-[edge:{relationship['type']}]->(target)
             """,
             repo_id=self.config.collection_id,
             source_id=relationship["source_id"],
@@ -271,6 +339,8 @@ class KnowledgeGraphBuilder:
     @staticmethod
     def _neo4j_label(entity_type: str) -> str:
         labels = {
+            "folder": "Folder",
+            "file": "File",
             "function": "Function",
             "class": "Class",
         }
@@ -278,18 +348,3 @@ class KnowledgeGraphBuilder:
             return labels[entity_type]
         except KeyError as exc:
             raise ValueError(f"Unsupported entity type for Neo4j label: {entity_type}") from exc
-
-
-if __name__ == "__main__":
-    import argparse
-    import json
-
-    cli = argparse.ArgumentParser(description="Index a repository into RepoContext stores.")
-    cli.add_argument("repository", nargs="?", default=".")
-    cli.add_argument("--rebuild", action="store_true")
-    args = cli.parse_args()
-
-    repository_path = Path(args.repository).resolve()
-    with KnowledgeGraphBuilder(GraphStoreConfig(repository_path=str(repository_path))) as builder:
-        summary = builder.index_repository(args.repository, rebuild=args.rebuild)
-    print(json.dumps(summary, indent=2))

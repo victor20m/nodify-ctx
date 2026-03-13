@@ -10,3 +10,5 @@ tree-sitter-javascript>=0.25.0,<0.26.0
 tree-sitter-python>=0.25.0,<0.26.0
 tree-sitter-typescript>=0.23.2,<0.24.0
 typing-extensions>=4.12.2,<5.0.0
+pytest>=8.3.5,<9.0.0
+pytest-cov>=6.0.0,<7.0.0

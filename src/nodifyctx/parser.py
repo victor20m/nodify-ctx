@@ -19,179 +19,179 @@ TSX_LANGUAGE = Language(tstypescript.language_tsx())
 
 @dataclass(frozen=True, slots=True)
 class LanguageSpec:
-        name: str
-        file_suffixes: tuple[str, ...]
-        language: Language
-        definition_query: Query
-        call_query: Query
-        class_ancestor_types: tuple[str, ...]
+    name: str
+    file_suffixes: tuple[str, ...]
+    language: Language
+    definition_query: Query
+    call_query: Query
+    class_ancestor_types: tuple[str, ...]
 
 
 def _python_language_spec() -> LanguageSpec:
-        return LanguageSpec(
-                name="python",
-                file_suffixes=(".py",),
-                language=PYTHON_LANGUAGE,
-                definition_query=Query(
-                        PYTHON_LANGUAGE,
-                        """
-                        (function_definition
-                            name: (identifier) @function.name) @function.node
+    return LanguageSpec(
+        name="python",
+        file_suffixes=(".py",),
+        language=PYTHON_LANGUAGE,
+        definition_query=Query(
+            PYTHON_LANGUAGE,
+            """
+            (function_definition
+                name: (identifier) @function.name) @function.node
 
-                        (class_definition
-                            name: (identifier) @class.name) @class.node
-                        """,
-                ),
-                call_query=Query(
-                        PYTHON_LANGUAGE,
-                        """
-                        (call
-                            function: [
-                                (identifier) @call.name
-                                (attribute
-                                    attribute: (identifier) @call.name)
-                            ]) @call.node
-                        """,
-                ),
-                class_ancestor_types=("class_definition",),
-        )
+            (class_definition
+                name: (identifier) @class.name) @class.node
+            """,
+        ),
+        call_query=Query(
+            PYTHON_LANGUAGE,
+            """
+            (call
+                function: [
+                    (identifier) @call.name
+                    (attribute
+                        attribute: (identifier) @call.name)
+                ]) @call.node
+            """,
+        ),
+        class_ancestor_types=("class_definition",),
+    )
 
 
 def _javascript_definition_query(language: Language) -> Query:
-        return Query(
-                language,
-                """
-                (function_declaration
-                    name: (identifier) @function.name) @function.node
+    return Query(
+        language,
+        """
+        (function_declaration
+            name: (identifier) @function.name) @function.node
 
-                (method_definition
-                    name: [
-                        (property_identifier)
-                        (private_property_identifier)
-                    ] @function.name) @function.node
+        (method_definition
+            name: [
+                (property_identifier)
+                (private_property_identifier)
+            ] @function.name) @function.node
 
-                (field_definition
-                    property: [
-                        (property_identifier)
-                        (private_property_identifier)
-                    ] @function.name
+        (field_definition
+            property: [
+                (property_identifier)
+                (private_property_identifier)
+            ] @function.name
+            value: [
+                (arrow_function) @function.owner
+                (function_expression) @function.owner
+            ]) @function.node
+
+        [
+            (lexical_declaration
+                (variable_declarator
+                    name: (identifier) @function.name
                     value: [
                         (arrow_function) @function.owner
                         (function_expression) @function.owner
-                    ]) @function.node
+                    ]) @function.node)
+            (variable_declaration
+                (variable_declarator
+                    name: (identifier) @function.name
+                    value: [
+                        (arrow_function) @function.owner
+                        (function_expression) @function.owner
+                    ]) @function.node)
+        ]
 
-                [
-                    (lexical_declaration
-                        (variable_declarator
-                            name: (identifier) @function.name
-                            value: [
-                                (arrow_function) @function.owner
-                                (function_expression) @function.owner
-                            ]) @function.node)
-                    (variable_declaration
-                        (variable_declarator
-                            name: (identifier) @function.name
-                            value: [
-                                (arrow_function) @function.owner
-                                (function_expression) @function.owner
-                            ]) @function.node)
-                ]
-
-                (class_declaration
-                    name: (identifier) @class.name) @class.node
-                """,
-        )
+        (class_declaration
+            name: (identifier) @class.name) @class.node
+        """,
+    )
 
 
 def _typescript_definition_query(language: Language) -> Query:
-        return Query(
-                language,
-                """
-                (function_declaration
-                    name: (identifier) @function.name) @function.node
+    return Query(
+        language,
+        """
+        (function_declaration
+            name: (identifier) @function.name) @function.node
 
-                (method_definition
-                    name: [
-                        (property_identifier)
-                        (private_property_identifier)
-                    ] @function.name) @function.node
+        (method_definition
+            name: [
+                (property_identifier)
+                (private_property_identifier)
+            ] @function.name) @function.node
 
-                (public_field_definition
-                    name: [
-                        (property_identifier)
-                        (private_property_identifier)
-                    ] @function.name
+        (public_field_definition
+            name: [
+                (property_identifier)
+                (private_property_identifier)
+            ] @function.name
+            value: [
+                (arrow_function) @function.owner
+                (function_expression) @function.owner
+            ]) @function.node
+
+        [
+            (lexical_declaration
+                (variable_declarator
+                    name: (identifier) @function.name
                     value: [
                         (arrow_function) @function.owner
                         (function_expression) @function.owner
-                    ]) @function.node
+                    ]) @function.node)
+            (variable_declaration
+                (variable_declarator
+                    name: (identifier) @function.name
+                    value: [
+                        (arrow_function) @function.owner
+                        (function_expression) @function.owner
+                    ]) @function.node)
+        ]
 
-                [
-                    (lexical_declaration
-                        (variable_declarator
-                            name: (identifier) @function.name
-                            value: [
-                                (arrow_function) @function.owner
-                                (function_expression) @function.owner
-                            ]) @function.node)
-                    (variable_declaration
-                        (variable_declarator
-                            name: (identifier) @function.name
-                            value: [
-                                (arrow_function) @function.owner
-                                (function_expression) @function.owner
-                            ]) @function.node)
-                ]
-
-                (class_declaration
-                    name: (type_identifier) @class.name) @class.node
-                """,
-        )
+        (class_declaration
+            name: (type_identifier) @class.name) @class.node
+        """,
+    )
 
 
 def _javascript_like_call_query(language: Language) -> Query:
-        return Query(
-                language,
-                """
-                (call_expression
-                    function: [
-                        (identifier) @call.name
-                        (member_expression
-                            property: [
-                                (property_identifier)
-                                (private_property_identifier)
-                            ] @call.name)
-                    ]) @call.node
-                """,
-        )
+    return Query(
+        language,
+        """
+        (call_expression
+            function: [
+                (identifier) @call.name
+                (member_expression
+                    property: [
+                        (property_identifier)
+                        (private_property_identifier)
+                    ] @call.name)
+            ]) @call.node
+        """,
+    )
 
 
 LANGUAGE_SPECS = (
-        _python_language_spec(),
-        LanguageSpec(
-                name="javascript",
-                file_suffixes=(".js", ".jsx"),
-                language=JAVASCRIPT_LANGUAGE,
-            definition_query=_javascript_definition_query(JAVASCRIPT_LANGUAGE),
-                call_query=_javascript_like_call_query(JAVASCRIPT_LANGUAGE),
-                class_ancestor_types=("class_declaration",),
-        ),
-        LanguageSpec(
-                name="typescript",
-                file_suffixes=(".ts",),
-                language=TYPESCRIPT_LANGUAGE,
-            definition_query=_typescript_definition_query(TYPESCRIPT_LANGUAGE),
-                call_query=_javascript_like_call_query(TYPESCRIPT_LANGUAGE),
-                class_ancestor_types=("class_declaration",),
-        ),
-        LanguageSpec(
-                name="tsx",
-                file_suffixes=(".tsx",),
-                language=TSX_LANGUAGE,
-            definition_query=_typescript_definition_query(TSX_LANGUAGE),
-                call_query=_javascript_like_call_query(TSX_LANGUAGE),
-                class_ancestor_types=("class_declaration",),
-        ),
+    _python_language_spec(),
+    LanguageSpec(
+        name="javascript",
+        file_suffixes=(".js", ".jsx"),
+        language=JAVASCRIPT_LANGUAGE,
+        definition_query=_javascript_definition_query(JAVASCRIPT_LANGUAGE),
+        call_query=_javascript_like_call_query(JAVASCRIPT_LANGUAGE),
+        class_ancestor_types=("class_declaration",),
+    ),
+    LanguageSpec(
+        name="typescript",
+        file_suffixes=(".ts",),
+        language=TYPESCRIPT_LANGUAGE,
+        definition_query=_typescript_definition_query(TYPESCRIPT_LANGUAGE),
+        call_query=_javascript_like_call_query(TYPESCRIPT_LANGUAGE),
+        class_ancestor_types=("class_declaration",),
+    ),
+    LanguageSpec(
+        name="tsx",
+        file_suffixes=(".tsx",),
+        language=TSX_LANGUAGE,
+        definition_query=_typescript_definition_query(TSX_LANGUAGE),
+        call_query=_javascript_like_call_query(TSX_LANGUAGE),
+        class_ancestor_types=("class_declaration",),
+    ),
 )
 
 
@@ -265,12 +265,17 @@ class CodeParser:
         }
 
     def parse(self) -> dict[str, list[dict[str, Any]]]:
-        """Return a JSON-serializable intermediate representation of the repository."""
         entities: list[ParsedEntity] = []
         relationships: list[ParsedRelationship] = []
 
-        for source_file in self._iter_source_files():
-            file_entities, file_relationships = self._parse_file(source_file)
+        source_files = self._iter_source_files()
+        structure_entities, structure_relationships, file_entities_by_path = self._build_structure_entities(source_files)
+        entities.extend(structure_entities)
+        relationships.extend(structure_relationships)
+
+        for source_file in source_files:
+            file_entity = file_entities_by_path[str(source_file.relative_to(self.root_path).as_posix())]
+            file_entities, file_relationships = self._parse_file(source_file, file_entity=file_entity)
             entities.extend(file_entities)
             relationships.extend(file_relationships)
 
@@ -283,15 +288,141 @@ class CodeParser:
 
     def _iter_source_files(self) -> list[Path]:
         supported_suffixes = set(self.language_specs_by_suffix)
-        return [
-            path
-            for path in self.root_path.rglob("*")
-            if path.is_file()
-            and path.suffix in supported_suffixes
-            and not any(part in self.exclude_directories for part in path.parts)
-        ]
+        return sorted(
+            [
+                path
+                for path in self.root_path.rglob("*")
+                if path.is_file()
+                and path.suffix in supported_suffixes
+                and not any(part in self.exclude_directories for part in path.parts)
+            ],
+            key=lambda path: path.as_posix(),
+        )
 
-    def _parse_file(self, file_path: Path) -> tuple[list[ParsedEntity], list[ParsedRelationship]]:
+    def _build_structure_entities(
+        self,
+        source_files: list[Path],
+    ) -> tuple[list[ParsedEntity], list[ParsedRelationship], dict[str, ParsedEntity]]:
+        entities: list[ParsedEntity] = []
+        relationships: list[ParsedRelationship] = []
+        folder_entities: dict[str, ParsedEntity] = {}
+        file_entities: dict[str, ParsedEntity] = {}
+        folder_children: dict[str, list[str]] = {}
+
+        root_entity = ParsedEntity(
+            id=self._entity_id(
+                entity_type="folder",
+                file_path=".",
+                qualified_name=self.root_path.name,
+                start_line=0,
+                end_line=0,
+            ),
+            type="folder",
+            name=self.root_path.name,
+            qualified_name=self.root_path.name,
+            file_path=".",
+            start_line=0,
+            end_line=0,
+            raw_code=f"Folder . (repository root: {self.root_path.name})",
+        )
+        folder_entities["."] = root_entity
+        entities.append(root_entity)
+
+        for source_file in source_files:
+            relative_file = source_file.relative_to(self.root_path).as_posix()
+            parent_relative = Path(relative_file).parent.as_posix()
+            if parent_relative == ".":
+                parent_relative = "."
+
+            current_path = Path(relative_file).parent
+            ancestors: list[str] = []
+            while current_path != Path("."):
+                ancestors.append(current_path.as_posix())
+                current_path = current_path.parent
+            for folder_path in reversed(ancestors):
+                if folder_path in folder_entities:
+                    continue
+
+                parent_path = Path(folder_path).parent.as_posix()
+                if parent_path == ".":
+                    parent_path = "."
+                parent_entity = folder_entities[parent_path]
+                folder_name = Path(folder_path).name
+                folder_entity = ParsedEntity(
+                    id=self._entity_id(
+                        entity_type="folder",
+                        file_path=folder_path,
+                        qualified_name=folder_path,
+                        start_line=0,
+                        end_line=0,
+                    ),
+                    type="folder",
+                    name=folder_name,
+                    qualified_name=folder_path,
+                    file_path=folder_path,
+                    start_line=0,
+                    end_line=0,
+                    raw_code=f"Folder {folder_path}",
+                    parent_id=parent_entity.id,
+                    parent_name=parent_entity.name,
+                )
+                folder_entities[folder_path] = folder_entity
+                entities.append(folder_entity)
+                relationships.append(
+                    ParsedRelationship(
+                        source_id=parent_entity.id,
+                        source_name=parent_entity.name,
+                        target_id=folder_entity.id,
+                        target_name=folder_entity.name,
+                        type="CONTAINS",
+                    )
+                )
+                folder_children.setdefault(parent_path, []).append(folder_name)
+
+            file_content = source_file.read_text(encoding="utf8")
+            file_entity = ParsedEntity(
+                id=self._entity_id(
+                    entity_type="file",
+                    file_path=relative_file,
+                    qualified_name=relative_file,
+                    start_line=1 if file_content else 0,
+                    end_line=file_content.count("\n") + 1 if file_content else 0,
+                ),
+                type="file",
+                name=source_file.name,
+                qualified_name=relative_file,
+                file_path=relative_file,
+                start_line=1 if file_content else 0,
+                end_line=file_content.count("\n") + 1 if file_content else 0,
+                raw_code=file_content,
+                parent_id=folder_entities[parent_relative].id,
+                parent_name=folder_entities[parent_relative].name,
+            )
+            file_entities[relative_file] = file_entity
+            entities.append(file_entity)
+            relationships.append(
+                ParsedRelationship(
+                    source_id=folder_entities[parent_relative].id,
+                    source_name=folder_entities[parent_relative].name,
+                    target_id=file_entity.id,
+                    target_name=file_entity.name,
+                    type="CONTAINS",
+                )
+            )
+            folder_children.setdefault(parent_relative, []).append(source_file.name)
+
+        for folder_path, folder_entity in folder_entities.items():
+            children = ", ".join(sorted(folder_children.get(folder_path, []))) or "empty"
+            folder_entity.raw_code = f"Folder {folder_entity.file_path} contains: {children}"
+
+        return entities, relationships, file_entities
+
+    def _parse_file(
+        self,
+        file_path: Path,
+        *,
+        file_entity: ParsedEntity,
+    ) -> tuple[list[ParsedEntity], list[ParsedRelationship]]:
         language_spec = self._language_spec_for_file(file_path)
         source_bytes = file_path.read_bytes()
         tree = self.parsers[language_spec.name].parse(source_bytes)
@@ -380,6 +511,16 @@ class CodeParser:
                     ParsedRelationship(
                         source_id=parent_id,
                         source_name=entity.parent_name,
+                        target_id=entity.id,
+                        target_name=entity.name,
+                        type="CONTAINS",
+                    )
+                )
+            elif parent_id is None:
+                relationships.append(
+                    ParsedRelationship(
+                        source_id=file_entity.id,
+                        source_name=file_entity.name,
                         target_id=entity.id,
                         target_name=entity.name,
                         type="CONTAINS",
@@ -544,15 +685,3 @@ class CodeParser:
             seen.add(key)
             unique_relationships.append(relationship)
         return unique_relationships
-
-
-if __name__ == "__main__":
-    import argparse
-    import json
-
-    cli = argparse.ArgumentParser(description="Parse a repository into RepoContext IR.")
-    cli.add_argument("repository", nargs="?", default=".")
-    args = cli.parse_args()
-
-    parsed = CodeParser(args.repository).parse()
-    print(json.dumps(parsed, indent=2))

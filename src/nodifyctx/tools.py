@@ -5,7 +5,7 @@ from typing import Any
 
 from langchain_core.tools import StructuredTool
 
-from graph_builder import KnowledgeGraphBuilder
+from .graph_builder import KnowledgeGraphBuilder
 
 
 @lru_cache(maxsize=1)
@@ -14,17 +14,7 @@ def get_builder() -> KnowledgeGraphBuilder:
 
 
 def semantic_search(query: str) -> list[dict[str, str]]:
-    """Run semantic retrieval over indexed code entities.
-
-    Use this first for every new user question. Pass a natural-language query that
-    describes the behavior, symbol, or responsibility you want to locate.
-
-    Args:
-        query: Natural-language search text for the indexed repository.
-
-    Returns:
-        Up to three dictionaries with keys `name`, `type`, and `file`.
-    """
+    """Run semantic retrieval over indexed code entities."""
     if not query.strip():
         raise ValueError("query must not be empty.")
 
@@ -54,17 +44,7 @@ def semantic_search(query: str) -> list[dict[str, str]]:
 
 
 def get_callers(node_name: str) -> list[str]:
-    """List code nodes that call the named target.
-
-    Use this after semantic search to understand inbound dependencies before
-    deciding whether the node is the right inspection target.
-
-    Args:
-        node_name: Exact indexed node name to look up in Neo4j.
-
-    Returns:
-        A sorted list of caller names. The list may be empty when no callers exist.
-    """
+    """List code nodes that call the named target."""
     if not node_name.strip():
         raise ValueError("node_name must not be empty.")
 
@@ -84,17 +64,7 @@ def get_callers(node_name: str) -> list[str]:
 
 
 def get_dependencies(node_name: str) -> list[str]:
-    """List the named node's outbound code dependencies.
-
-    Use this after semantic search to map what a candidate node calls before
-    inspecting its source code directly.
-
-    Args:
-        node_name: Exact indexed node name to look up in Neo4j.
-
-    Returns:
-        A sorted list of dependency names. The list may be empty when none exist.
-    """
+    """List the named node's outbound code dependencies."""
     if not node_name.strip():
         raise ValueError("node_name must not be empty.")
 
@@ -114,18 +84,7 @@ def get_dependencies(node_name: str) -> list[str]:
 
 
 def inspect_code(node_name: str) -> dict[str, Any]:
-    """Fetch source code for one clearly identified node.
-
-    Use this only after semantic search and graph traversal have isolated the
-    correct node. If multiple indexed nodes share the same name, the tool returns
-    an explicit ambiguity payload instead of guessing.
-
-    Args:
-        node_name: Exact indexed node name to inspect.
-
-    Returns:
-        A dictionary containing `name`, `file`, and `code`, or an error payload.
-    """
+    """Fetch source code for one clearly identified node."""
     if not node_name.strip():
         raise ValueError("node_name must not be empty.")
 
