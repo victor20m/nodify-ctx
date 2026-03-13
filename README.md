@@ -2,7 +2,7 @@
 
 Local code-graph indexing and exploration for Python, JavaScript, TypeScript, and React repositories.
 
-RepoContext parses a local codebase into semantic entities, stores structure in Neo4j, stores embeddings in Qdrant, and exposes a small tool surface that a local LLM can use for graph-guided code exploration.
+RepoContext parses a local codebase into semantic entities, stores structure in Neo4j, stores embeddings in Qdrant, and exposes a small tool surface that an LLM can use for graph-guided code exploration.
 
 ## Supported source files
 
@@ -51,62 +51,76 @@ For public repos, do not commit `.env`. This project now includes `.gitignore` a
 Index a repository and start the interactive agent:
 
 ```bash
-python main_agent.py "C:\path\to\repository"
+python main_agent.py "/path/to/repository"
+# or on macOS/Linux
+python main_agent.py "$HOME/path/to/repository"
 ```
 
 Skip re-indexing when you want to reuse an existing graph/vector store:
 
 ```bash
-python main_agent.py "C:\path\to\repository" --skip-index
+python main_agent.py "/path/to/repository" --skip-index
 ```
 
 Ask one question on the command line and exit:
 
 ```bash
-python main_agent.py "C:\path\to\repository" --skip-index --question "Where is axios setup?"
+python main_agent.py "/path/to/repository" --skip-index --question "Describe this project."
 ```
 
 Use a running Qdrant server explicitly:
 
 ```bash
-python main_agent.py "C:\path\to\repository" --qdrant-url http://127.0.0.1:6333
+python main_agent.py "/path/to/repository" --qdrant-url http://127.0.0.1:6333
 ```
 
-Combine both for a fast test against an already indexed project and a running LLM service:
+By default, RepoContext keeps each local repository in its own scope. The scope ID is derived from the repository path, so indexing repo A won't overwrite or mix with repo B in Neo4j or Qdrant.
+
+If you want to pin a custom scope name, pass an optional collection ID:
 
 ```bash
-python main_agent.py "C:\path\to\repository" --skip-index --qdrant-url http://127.0.0.1:6333 --question "Which component initializes notifications?"
+python main_agent.py "/path/to/repository" --collection-id mobile_app
+```
+
+Combine `--skip-index`, a running Qdrant service, and an existing index for a fast test:
+
+```bash
+python main_agent.py "/path/to/repository" --skip-index --qdrant-url http://127.0.0.1:6333 --question "Which component initializes notifications?"
+```
 
 If your chat and embeddings APIs are behind the same endpoint (e.g., a single LM Studio instance), you can pass the same URL for both with the convenience flag:
 
 ```bash
-python main_agent.py "C:\path\to\repository" --skip-index --model-base-url http://127.0.0.1:1234/v1 --question "Where is axios setup?"
-```
+python main_agent.py "/path/to/repository" --skip-index --model-base-url http://127.0.0.1:1234/v1 --question "Where is axios setup?"
 ```
 
 ## Testing A Specific Project
 
-Recommended workflow for a target repo such as `C:\path\to\example-repo`:
+Recommended workflow for a target repo such as `~/example-repo` (macOS/Linux) or `C:\path\to\example-repo` (Windows):
 
 1. Index it once.
 
 ```bash
-python main_agent.py "C:\path\to\example-repo" --qdrant-url http://127.0.0.1:6333
+python main_agent.py "~/example-repo" --qdrant-url http://127.0.0.1:6333
+# or on macOS/Linux with expanded home
+python main_agent.py "$HOME/example-repo" --qdrant-url http://127.0.0.1:6333
 ```
 
 2. Reuse the existing graph/vector index for fast follow-up questions.
 
 ```bash
-python main_agent.py "C:\path\to\example-repo" --skip-index --qdrant-url http://127.0.0.1:6333 --question "Where is axios setup?"
+python main_agent.py "~/example-repo" --skip-index --qdrant-url http://127.0.0.1:6333 --question "Where is axios setup?"
 ```
 
 3. Switch to interactive mode when you want a conversation instead of a one-shot answer.
 
 ```bash
-python main_agent.py "C:\path\to\example-repo" --skip-index --qdrant-url http://127.0.0.1:6333
+python main_agent.py "~/example-repo" --skip-index --qdrant-url http://127.0.0.1:6333
 ```
 
 `--skip-index` only works if the project has already been indexed into Neo4j and Qdrant with the same repository contents you want to search.
+
+`--collection-id` is optional, but useful when you want a stable human-chosen scope name instead of the default path-derived one. `--qdrant-collection` remains available as a lower-level escape hatch if you need to force the exact Qdrant collection name.
 
 ## Local Tool Integration
 
@@ -142,7 +156,7 @@ code = inspect_code(hits[0]["name"])
 
 ## Current Validation
 
-This project was validated against `C:\path\to\example-repo` with the current parser changes.
+This project was validated against a local test repository such as `~/example-repo` (macOS/Linux) or `C:\path\to\example-repo` (Windows) with the current parser changes.
 
 - Parsed 453 entities and 337 relationships from `.ts` and `.tsx` files.
 - Indexed successfully into Neo4j and Qdrant.

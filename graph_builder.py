@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 from pathlib import Path
+import re
 from typing import Any
 import os
 
@@ -13,14 +15,42 @@ from qdrant_client.http.models import Distance, PointStruct, VectorParams
 from parser import CodeParser
 
 
+DEFAULT_QDRANT_COLLECTION_PREFIX = "repo_context_nodes"
+_COLLECTION_SEGMENT_PATTERN = re.compile(r"[^a-z0-9]+")
+
+
+def _normalize_repository_path(repository_path: str | Path) -> str:
+    return str(Path(repository_path).resolve()).replace("\\", "/").lower()
+
+
+def sanitize_collection_id(value: str) -> str:
+    normalized = _COLLECTION_SEGMENT_PATTERN.sub("_", value.strip().lower()).strip("_")
+    if not normalized:
+        raise ValueError("Collection ID must contain at least one letter or number.")
+    return normalized[:40]
+
+
+def build_collection_id(repository_path: str | Path) -> str:
+    repository_root = Path(repository_path).resolve()
+    slug = sanitize_collection_id(repository_root.name or "repo")
+    digest = hashlib.sha1(_normalize_repository_path(repository_root).encode("utf8")).hexdigest()[:10]
+    return f"{slug}_{digest}"
+
+
+def build_qdrant_collection_name(collection_id: str) -> str:
+    return f"{DEFAULT_QDRANT_COLLECTION_PREFIX}__{collection_id}"
+
+
 @dataclass(slots=True)
 class GraphStoreConfig:
+    repository_path: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_REPOSITORY_PATH", "."))
+    collection_id: str | None = field(default_factory=lambda: os.getenv("REPOCONTEXT_COLLECTION_ID") or None)
     neo4j_uri: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_NEO4J_URI", "bolt://localhost:7687"))
     neo4j_username: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_NEO4J_USERNAME", "neo4j"))
     neo4j_password: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_NEO4J_PASSWORD", "neo4j"))
     qdrant_url: str | None = field(default_factory=lambda: os.getenv("REPOCONTEXT_QDRANT_URL") or None)
-    qdrant_path: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_QDRANT_PATH", ".repocontext\\qdrant"))
-    qdrant_collection: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_QDRANT_COLLECTION", "repo_context_nodes"))
+    qdrant_path: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_QDRANT_PATH", ".repocontext/qdrant"))
+    qdrant_collection: str | None = field(default_factory=lambda: os.getenv("REPOCONTEXT_QDRANT_COLLECTION") or None)
     embeddings_base_url: str = field(
         default_factory=lambda: os.getenv(
             "REPOCONTEXT_EMBEDDINGS_BASE_URL",
@@ -39,6 +69,18 @@ class GraphStoreConfig:
             "text-embedding-nomic-embed-text-v1.5",
         )
     )
+
+    def __post_init__(self) -> None:
+        self.repository_path = str(Path(self.repository_path).resolve())
+        if self.collection_id and self.collection_id.strip():
+            self.collection_id = sanitize_collection_id(self.collection_id)
+        else:
+            self.collection_id = build_collection_id(self.repository_path)
+
+        if self.qdrant_collection and self.qdrant_collection.strip():
+            self.qdrant_collection = self.qdrant_collection.strip()
+        else:
+            self.qdrant_collection = build_qdrant_collection_name(self.collection_id)
 
 
 class KnowledgeGraphBuilder:
@@ -109,6 +151,7 @@ class KnowledgeGraphBuilder:
         return {
             "entities_indexed": len(entities),
             "relationships_indexed": len(relationships),
+            "collection_id": self.config.collection_id,
             "qdrant_collection": self.config.qdrant_collection,
         }
 
@@ -147,22 +190,33 @@ class KnowledgeGraphBuilder:
         with self.neo4j.session() as session:
             session.run(
                 """
-                CREATE CONSTRAINT repo_context_node_id IF NOT EXISTS
-                FOR (node:CodeEntity)
-                REQUIRE node.node_id IS UNIQUE
+                DROP CONSTRAINT repo_context_node_id IF EXISTS
                 """
             )
             session.run(
                 """
-                CREATE INDEX repo_context_node_name IF NOT EXISTS
+                CREATE CONSTRAINT repo_context_node_repo_id IF NOT EXISTS
                 FOR (node:CodeEntity)
-                ON (node.name)
+                REQUIRE (node.repo_id, node.node_id) IS UNIQUE
+                """
+            )
+            session.run(
+                """
+                CREATE INDEX repo_context_node_repo_name IF NOT EXISTS
+                FOR (node:CodeEntity)
+                ON (node.repo_id, node.name)
                 """
             )
 
     def _clear_graph(self) -> None:
         with self.neo4j.session() as session:
-            session.run("MATCH (node:CodeEntity) DETACH DELETE node")
+            session.run(
+                """
+                MATCH (node:CodeEntity {repo_id: $repo_id})
+                DETACH DELETE node
+                """,
+                repo_id=self.config.collection_id,
+            )
 
     def _recreate_collection(self) -> None:
         if self.qdrant.collection_exists(self.config.qdrant_collection):
@@ -180,8 +234,9 @@ class KnowledgeGraphBuilder:
         label = self._neo4j_label(entity["type"])
         session.run(
             f"""
-            MERGE (node:CodeEntity:{label} {{node_id: $node_id}})
-            SET node.name = $name,
+            MERGE (node:CodeEntity:{label} {{repo_id: $repo_id, node_id: $node_id}})
+            SET node.repo_id = $repo_id,
+                node.name = $name,
                 node.type = $type,
                 node.file = $file_path,
                 node.file_path = $file_path,
@@ -190,6 +245,7 @@ class KnowledgeGraphBuilder:
                 node.end_line = $end_line,
                 node.raw_code = $raw_code
             """,
+            repo_id=self.config.collection_id,
             node_id=entity["id"],
             name=entity["name"],
             type=entity["type"],
@@ -203,10 +259,11 @@ class KnowledgeGraphBuilder:
     def _upsert_relationship(self, session: Any, relationship: dict[str, Any]) -> None:
         session.run(
             f"""
-            MATCH (source:CodeEntity {{node_id: $source_id}})
-            MATCH (target:CodeEntity {{node_id: $target_id}})
+            MATCH (source:CodeEntity {{repo_id: $repo_id, node_id: $source_id}})
+            MATCH (target:CodeEntity {{repo_id: $repo_id, node_id: $target_id}})
             MERGE (source)-[edge:{relationship["type"]}]->(target)
             """,
+            repo_id=self.config.collection_id,
             source_id=relationship["source_id"],
             target_id=relationship["target_id"],
         )
@@ -232,6 +289,7 @@ if __name__ == "__main__":
     cli.add_argument("--rebuild", action="store_true")
     args = cli.parse_args()
 
-    with KnowledgeGraphBuilder() as builder:
+    repository_path = Path(args.repository).resolve()
+    with KnowledgeGraphBuilder(GraphStoreConfig(repository_path=str(repository_path))) as builder:
         summary = builder.index_repository(args.repository, rebuild=args.rebuild)
     print(json.dumps(summary, indent=2))

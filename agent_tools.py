@@ -73,10 +73,11 @@ def get_callers(node_name: str) -> list[str]:
         records = session.run(
             """
             MATCH (caller:CodeEntity)-[:CALLS]->(target:CodeEntity)
-            WHERE target.name = $node_name
+            WHERE target.repo_id = $repo_id AND caller.repo_id = $repo_id AND target.name = $node_name
             RETURN DISTINCT caller.name AS name
             ORDER BY name
             """,
+            repo_id=builder.config.collection_id,
             node_name=node_name.strip(),
         )
         return [record["name"] for record in records]
@@ -102,10 +103,11 @@ def get_dependencies(node_name: str) -> list[str]:
         records = session.run(
             """
             MATCH (source:CodeEntity)-[:CALLS]->(dependency:CodeEntity)
-            WHERE source.name = $node_name
+            WHERE source.repo_id = $repo_id AND dependency.repo_id = $repo_id AND source.name = $node_name
             RETURN DISTINCT dependency.name AS name
             ORDER BY name
             """,
+            repo_id=builder.config.collection_id,
             node_name=node_name.strip(),
         )
         return [record["name"] for record in records]
@@ -133,13 +135,14 @@ def inspect_code(node_name: str) -> dict[str, Any]:
             session.run(
                 """
                 MATCH (node:CodeEntity)
-                WHERE node.name = $node_name
+                WHERE node.repo_id = $repo_id AND node.name = $node_name
                 RETURN node.name AS name,
                        node.file AS file,
                        node.raw_code AS code
                 ORDER BY node.file, node.start_line
                 LIMIT 5
                 """,
+                repo_id=builder.config.collection_id,
                 node_name=node_name.strip(),
             )
         )

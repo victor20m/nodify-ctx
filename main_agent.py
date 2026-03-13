@@ -14,7 +14,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
 from agent_tools import TOOL_FUNCTIONS, build_langchain_tools, close_runtime, semantic_search
-from graph_builder import KnowledgeGraphBuilder
+from graph_builder import GraphStoreConfig, KnowledgeGraphBuilder
 from dotenv import load_dotenv, find_dotenv
 # Explicitly find and load the repository .env so running from other CWDs still works.
 _env_path = find_dotenv()
@@ -395,11 +395,20 @@ def parse_args() -> argparse.Namespace:
     cli.add_argument("--neo4j-uri", default=os.getenv("REPOCONTEXT_NEO4J_URI", "bolt://localhost:7687"))
     cli.add_argument("--neo4j-username", default=os.getenv("REPOCONTEXT_NEO4J_USERNAME", "neo4j"))
     cli.add_argument("--neo4j-password", default=os.getenv("REPOCONTEXT_NEO4J_PASSWORD", "neo4j"))
-    cli.add_argument("--qdrant-path", default=os.getenv("REPOCONTEXT_QDRANT_PATH", ".repocontext\\qdrant"))
+    cli.add_argument("--qdrant-path", default=os.getenv("REPOCONTEXT_QDRANT_PATH", ".repocontext/qdrant"))
     cli.add_argument("--qdrant-url", default=os.getenv("REPOCONTEXT_QDRANT_URL"))
     cli.add_argument(
+        "--collection-id",
+        default=os.getenv("REPOCONTEXT_COLLECTION_ID"),
+        help=(
+            "Optional repository scope ID. Defaults to a stable value derived from the repository path, "
+            "so different local repos keep separate graph/vector contexts."
+        ),
+    )
+    cli.add_argument(
         "--qdrant-collection",
-        default=os.getenv("REPOCONTEXT_QDRANT_COLLECTION", "repo_context_nodes"),
+        default=os.getenv("REPOCONTEXT_QDRANT_COLLECTION"),
+        help="Optional full Qdrant collection name override. Usually --collection-id is the better choice.",
     )
     cli.add_argument(
         "--lmstudio-base-url",
@@ -417,6 +426,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def configure_environment(args: argparse.Namespace) -> None:
+    repository_path = str(Path(args.repository).resolve())
+
+    os.environ["REPOCONTEXT_REPOSITORY_PATH"] = repository_path
     os.environ["REPOCONTEXT_EMBEDDING_MODEL"] = args.embedding_model
     os.environ["REPOCONTEXT_NEO4J_URI"] = args.neo4j_uri
     os.environ["REPOCONTEXT_NEO4J_USERNAME"] = args.neo4j_username
@@ -426,7 +438,14 @@ def configure_environment(args: argparse.Namespace) -> None:
         os.environ["REPOCONTEXT_QDRANT_URL"] = args.qdrant_url
     else:
         os.environ.pop("REPOCONTEXT_QDRANT_URL", None)
-    os.environ["REPOCONTEXT_QDRANT_COLLECTION"] = args.qdrant_collection
+    if args.collection_id:
+        os.environ["REPOCONTEXT_COLLECTION_ID"] = args.collection_id
+    else:
+        os.environ.pop("REPOCONTEXT_COLLECTION_ID", None)
+    if args.qdrant_collection:
+        os.environ["REPOCONTEXT_QDRANT_COLLECTION"] = args.qdrant_collection
+    else:
+        os.environ.pop("REPOCONTEXT_QDRANT_COLLECTION", None)
     # Determine base URLs. Priority:
     # 1. --model-base-url (single URL for both)
     # 2. explicit --chat-base-url / --embeddings-base-url
@@ -465,12 +484,19 @@ def build_index_if_requested(args: argparse.Namespace) -> None:
         return
 
     repository_path = Path(args.repository).resolve()
-    with KnowledgeGraphBuilder() as builder:
+    with KnowledgeGraphBuilder(
+        GraphStoreConfig(
+            repository_path=str(repository_path),
+            collection_id=args.collection_id,
+            qdrant_collection=args.qdrant_collection,
+        )
+    ) as builder:
         summary = builder.index_repository(repository_path, rebuild=args.rebuild)
     print(
         "[index]\n"
         f"Indexed {summary['entities_indexed']} entities and {summary['relationships_indexed']} relationships "
-        f"from {summary['repository_path']}.\n"
+        f"from {summary['repository_path']} into scope '{summary['collection_id']}' "
+        f"(Qdrant: {summary['qdrant_collection']}).\n"
     )
 
 
