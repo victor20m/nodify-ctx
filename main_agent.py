@@ -65,8 +65,24 @@ def _env_recursion_limit(name: str, default: int) -> int:
 @dataclass(slots=True)
 class AgentRuntimeConfig:
     chat_model: str
-    lmstudio_base_url: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1"))
-    lmstudio_api_key: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_LMSTUDIO_API_KEY", "lm-studio"))
+    chat_base_url: str = field(
+        default_factory=lambda: os.getenv(
+            "REPOCONTEXT_CHAT_BASE_URL",
+            os.getenv("REPOCONTEXT_LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1"),
+        )
+    )
+    embeddings_base_url: str = field(
+        default_factory=lambda: os.getenv(
+            "REPOCONTEXT_EMBEDDINGS_BASE_URL",
+            os.getenv("REPOCONTEXT_LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1"),
+        )
+    )
+    model_api_key: str = field(
+        default_factory=lambda: os.getenv(
+            "REPOCONTEXT_MODEL_API_KEY",
+            os.getenv("REPOCONTEXT_LMSTUDIO_API_KEY", "lm-studio"),
+        )
+    )
     temperature: float = 0.0
     max_tool_iterations: int = field(default_factory=lambda: _env_int("REPOCONTEXT_MAX_TOOL_ITERATIONS", 10))
     graph_recursion_limit: int = field(default_factory=lambda: _env_recursion_limit("REPOCONTEXT_GRAPH_RECURSION_LIMIT", 100))
@@ -94,8 +110,8 @@ class RepoContextAgent:
         self.tools = build_langchain_tools()
         self.model = ChatOpenAI(
             model=self.config.chat_model,
-            base_url=self.config.lmstudio_base_url,
-            api_key=self.config.lmstudio_api_key,
+            base_url=self.config.chat_base_url,
+            api_key=self.config.model_api_key,
             temperature=self.config.temperature,
         )
         self.tool_model = self.model.bind_tools(self.tools)
@@ -356,6 +372,26 @@ def parse_args() -> argparse.Namespace:
         "--embedding-model",
         default=os.getenv("REPOCONTEXT_EMBEDDING_MODEL", "text-embedding-nomic-embed-text-v1.5"),
     )
+    cli.add_argument(
+        "--chat-base-url",
+        default=os.getenv("REPOCONTEXT_CHAT_BASE_URL"),
+        help="Base URL for chat/completions API (overrides REPOCONTEXT_CHAT_BASE_URL).",
+    )
+    cli.add_argument(
+        "--embeddings-base-url",
+        default=os.getenv("REPOCONTEXT_EMBEDDINGS_BASE_URL"),
+        help="Base URL for embeddings API (overrides REPOCONTEXT_EMBEDDINGS_BASE_URL).",
+    )
+    cli.add_argument(
+        "--model-base-url",
+        default=os.getenv("REPOCONTEXT_MODEL_BASE_URL"),
+        help="Optional single base URL to use for both chat and embeddings (convenience).",
+    )
+    cli.add_argument(
+        "--model-api-key",
+        default=os.getenv("REPOCONTEXT_MODEL_API_KEY", os.getenv("REPOCONTEXT_LMSTUDIO_API_KEY", "lm-studio")),
+        help="API key/token for the model service (REPOCONTEXT_MODEL_API_KEY).",
+    )
     cli.add_argument("--neo4j-uri", default=os.getenv("REPOCONTEXT_NEO4J_URI", "bolt://localhost:7687"))
     cli.add_argument("--neo4j-username", default=os.getenv("REPOCONTEXT_NEO4J_USERNAME", "neo4j"))
     cli.add_argument("--neo4j-password", default=os.getenv("REPOCONTEXT_NEO4J_PASSWORD", "neo4j"))
@@ -368,8 +404,13 @@ def parse_args() -> argparse.Namespace:
     cli.add_argument(
         "--lmstudio-base-url",
         default=os.getenv("REPOCONTEXT_LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1"),
+        help="Legacy LM Studio base URL (kept for backward compatibility).",
     )
-    cli.add_argument("--lmstudio-api-key", default=os.getenv("REPOCONTEXT_LMSTUDIO_API_KEY", "lm-studio"))
+    cli.add_argument(
+        "--lmstudio-api-key",
+        default=os.getenv("REPOCONTEXT_LMSTUDIO_API_KEY", "lm-studio"),
+        help="Legacy LM Studio API key (kept for backward compatibility).",
+    )
     cli.add_argument("--rebuild", action="store_true", help="Clear previous graph/vector data before indexing.")
     cli.add_argument("--skip-index", action="store_true", help="Use the existing index without re-parsing the repo.")
     return cli.parse_args()
@@ -386,8 +427,35 @@ def configure_environment(args: argparse.Namespace) -> None:
     else:
         os.environ.pop("REPOCONTEXT_QDRANT_URL", None)
     os.environ["REPOCONTEXT_QDRANT_COLLECTION"] = args.qdrant_collection
-    os.environ["REPOCONTEXT_LMSTUDIO_BASE_URL"] = args.lmstudio_base_url
-    os.environ["REPOCONTEXT_LMSTUDIO_API_KEY"] = args.lmstudio_api_key
+    # Determine base URLs. Priority:
+    # 1. --model-base-url (single URL for both)
+    # 2. explicit --chat-base-url / --embeddings-base-url
+    # 3. legacy --lmstudio-base-url or env REPOCONTEXT_LMSTUDIO_BASE_URL
+    if getattr(args, "model_base_url", None):
+        chat_url = embeddings_url = args.model_base_url
+    else:
+        chat_url = args.chat_base_url or args.lmstudio_base_url or os.getenv("REPOCONTEXT_CHAT_BASE_URL") or os.getenv("REPOCONTEXT_LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1")
+        embeddings_url = args.embeddings_base_url or args.lmstudio_base_url or os.getenv("REPOCONTEXT_EMBEDDINGS_BASE_URL") or os.getenv("REPOCONTEXT_LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1")
+
+    os.environ["REPOCONTEXT_CHAT_BASE_URL"] = chat_url
+    os.environ["REPOCONTEXT_EMBEDDINGS_BASE_URL"] = embeddings_url
+    # Store the single model base URL if provided (helps scripts detect parity)
+    if getattr(args, "model_base_url", None):
+        os.environ["REPOCONTEXT_MODEL_BASE_URL"] = args.model_base_url
+    else:
+        # if both resolved to same url, keep MODEL_BASE_URL in env for convenience
+        if chat_url == embeddings_url:
+            os.environ["REPOCONTEXT_MODEL_BASE_URL"] = chat_url
+        else:
+            os.environ.pop("REPOCONTEXT_MODEL_BASE_URL", None)
+
+    # API key resolution: prefer new var, then legacy LM Studio key
+    model_api_key = args.model_api_key or args.lmstudio_api_key or os.getenv("REPOCONTEXT_MODEL_API_KEY") or os.getenv("REPOCONTEXT_LMSTUDIO_API_KEY", "lm-studio")
+    os.environ["REPOCONTEXT_MODEL_API_KEY"] = model_api_key
+
+    # Keep legacy LM Studio env vars for backward compatibility
+    os.environ["REPOCONTEXT_LMSTUDIO_BASE_URL"] = chat_url
+    os.environ["REPOCONTEXT_LMSTUDIO_API_KEY"] = model_api_key
     if args.chat_model:
         os.environ["REPOCONTEXT_CHAT_MODEL"] = args.chat_model
 

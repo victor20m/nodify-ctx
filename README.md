@@ -38,7 +38,8 @@ Create `.env` from `.env.example`, then set the required values:
 
 - `REPOCONTEXT_CHAT_MODEL`
 - `REPOCONTEXT_EMBEDDING_MODEL`
-- `REPOCONTEXT_LMSTUDIO_BASE_URL`
+- `REPOCONTEXT_CHAT_BASE_URL` and/or `REPOCONTEXT_EMBEDDINGS_BASE_URL` (or use the single `REPOCONTEXT_MODEL_BASE_URL` convenience variable)
+- `REPOCONTEXT_MODEL_API_KEY` (or `REPOCONTEXT_LMSTUDIO_API_KEY` for legacy setups)
 - `REPOCONTEXT_QDRANT_URL` when using a running Qdrant container
 - `REPOCONTEXT_MAX_TOOL_ITERATIONS` to control how many tool rounds the agent may use
 - `REPOCONTEXT_GRAPH_RECURSION_LIMIT` to control the LangGraph recursion cap
@@ -75,6 +76,12 @@ Combine both for a fast test against an already indexed project and a running LL
 
 ```bash
 python main_agent.py "C:\path\to\repository" --skip-index --qdrant-url http://127.0.0.1:6333 --question "Which component initializes notifications?"
+
+If your chat and embeddings APIs are behind the same endpoint (e.g., a single LM Studio instance), you can pass the same URL for both with the convenience flag:
+
+```bash
+python main_agent.py "C:\path\to\repository" --skip-index --model-base-url http://127.0.0.1:1234/v1 --question "Where is axios setup?"
+```
 ```
 
 ## Testing A Specific Project

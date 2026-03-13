@@ -21,8 +21,18 @@ class GraphStoreConfig:
     qdrant_url: str | None = field(default_factory=lambda: os.getenv("REPOCONTEXT_QDRANT_URL") or None)
     qdrant_path: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_QDRANT_PATH", ".repocontext\\qdrant"))
     qdrant_collection: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_QDRANT_COLLECTION", "repo_context_nodes"))
-    lmstudio_base_url: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1"))
-    lmstudio_api_key: str = field(default_factory=lambda: os.getenv("REPOCONTEXT_LMSTUDIO_API_KEY", "lm-studio"))
+    embeddings_base_url: str = field(
+        default_factory=lambda: os.getenv(
+            "REPOCONTEXT_EMBEDDINGS_BASE_URL",
+            os.getenv("REPOCONTEXT_LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1"),
+        )
+    )
+    model_api_key: str = field(
+        default_factory=lambda: os.getenv(
+            "REPOCONTEXT_MODEL_API_KEY",
+            os.getenv("REPOCONTEXT_LMSTUDIO_API_KEY", "lm-studio"),
+        )
+    )
     embedding_model: str = field(
         default_factory=lambda: os.getenv(
             "REPOCONTEXT_EMBEDDING_MODEL",
@@ -44,8 +54,8 @@ class KnowledgeGraphBuilder:
         )
         self.neo4j.verify_connectivity()
         self.embedding_client = OpenAI(
-            base_url=self.config.lmstudio_base_url,
-            api_key=self.config.lmstudio_api_key,
+            base_url=self.config.embeddings_base_url,
+            api_key=self.config.model_api_key,
         )
         self._ensure_graph_schema()
 
