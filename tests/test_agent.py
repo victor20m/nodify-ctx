@@ -16,19 +16,41 @@ def _agent_instance():
         "inspect_code": lambda node_name: {"name": node_name, "file": "a.py", "code": "pass"},
     }
     instance.model = SimpleNamespace(invoke=lambda messages: AIMessage(content="retry answer"))
+    instance.tool_model = SimpleNamespace(invoke=lambda messages: AIMessage(content="tool answer"))
+    instance.model_backends = [
+        SimpleNamespace(
+            label="primary:model",
+            base_url="http://primary",
+            model=instance.model,
+            tool_model=instance.tool_model,
+        )
+    ]
     return instance
 
 
 def test_env_parsers_validate_values(monkeypatch):
     monkeypatch.setenv("NODIFYCTX_MAX_TOOL_ITERATIONS", "3")
     monkeypatch.setenv("NODIFYCTX_GRAPH_RECURSION_LIMIT", "unlimited")
+    monkeypatch.setenv("NODIFYCTX_MODEL_MAX_RETRIES", "0")
 
     assert agent_mod._env_int("NODIFYCTX_MAX_TOOL_ITERATIONS", 10) == 3
     assert agent_mod._env_recursion_limit("NODIFYCTX_GRAPH_RECURSION_LIMIT", 100) == 1_000_000
+    assert agent_mod._env_non_negative_int("NODIFYCTX_MODEL_MAX_RETRIES", 2) == 0
 
     monkeypatch.setenv("NODIFYCTX_MAX_TOOL_ITERATIONS", "0")
     with pytest.raises(ValueError):
         agent_mod._env_int("NODIFYCTX_MAX_TOOL_ITERATIONS", 10)
+
+    monkeypatch.setenv("NODIFYCTX_MODEL_MAX_RETRIES", "-1")
+    with pytest.raises(ValueError):
+        agent_mod._env_non_negative_int("NODIFYCTX_MODEL_MAX_RETRIES", 2)
+
+
+def test_provider_resolution_helpers_cover_supported_backends():
+    assert agent_mod._resolve_chat_provider(None, "https://api.openai.com/v1", "gpt-4.1-mini") == "openai"
+    assert agent_mod._resolve_chat_provider(None, "https://api.deepseek.com/v1", "deepseek-chat") == "deepseek"
+    assert agent_mod._resolve_chat_provider("claude", None, "claude-3-7-sonnet-latest") == "anthropic"
+    assert agent_mod._resolve_chat_provider(None, None, "local-model") == "lmstudio"
 
 
 def test_message_helpers_extract_and_clean_content():
@@ -102,6 +124,12 @@ def test_finalize_budget_response_uses_retry_or_fallback():
     assert retry.content == "retry answer"
 
     instance.model = SimpleNamespace(invoke=lambda messages: AIMessage(content="<tool_call>still bad</tool_call>"))
+    instance.model_backends[0] = SimpleNamespace(
+        label="primary:model",
+        base_url="http://primary",
+        model=instance.model,
+        tool_model=instance.tool_model,
+    )
     fallback = instance._finalize_budget_response(state, AIMessage(content="<tool_call>bad</tool_call>"))
     assert "Unable to complete the analysis" in fallback.content
 
@@ -160,7 +188,7 @@ def test_semantic_seed_adds_system_message(monkeypatch):
 def test_reason_uses_tool_model_or_budget_finalize():
     instance = _agent_instance()
     instance.config = SimpleNamespace(max_tool_iterations=5)
-    instance.tool_model = SimpleNamespace(invoke=lambda messages: AIMessage(content="tool answer"))
+    instance._invoke_chat_model = lambda messages, use_tools: AIMessage(content="tool answer")
     instance._coerce_tool_calls = lambda response: response
 
     state = {"messages": [SystemMessage(content="sys")], "search_results": [], "traversal_count": 0, "iteration_count": 0}
@@ -168,10 +196,50 @@ def test_reason_uses_tool_model_or_budget_finalize():
     assert result["messages"][-1].content == "tool answer"
 
     instance.config = SimpleNamespace(max_tool_iterations=0)
-    instance.model = SimpleNamespace(invoke=lambda messages: AIMessage(content="budget raw"))
+    instance._invoke_chat_model = lambda messages, use_tools: AIMessage(content="budget raw")
     instance._finalize_budget_response = lambda state, response: AIMessage(content="final budget answer")
     result = instance._reason(state)
     assert result["messages"][-1].content == "final budget answer"
+
+
+def test_invoke_chat_model_falls_back_to_secondary_backend():
+    instance = _agent_instance()
+
+    class TimeoutFailure(Exception):
+        pass
+
+    primary = SimpleNamespace(
+        label="openai:gpt-4.1-mini",
+        base_url="https://api.openai.com/v1",
+        model=SimpleNamespace(invoke=lambda messages: (_ for _ in ()).throw(TimeoutFailure("timed out"))),
+        tool_model=SimpleNamespace(invoke=lambda messages: (_ for _ in ()).throw(TimeoutFailure("timed out"))),
+    )
+    secondary = SimpleNamespace(
+        label="deepseek:deepseek-chat",
+        base_url="https://api.deepseek.com/v1",
+        model=SimpleNamespace(invoke=lambda messages: AIMessage(content="fallback answer")),
+        tool_model=SimpleNamespace(invoke=lambda messages: AIMessage(content="fallback answer")),
+    )
+    instance.model_backends = [primary, secondary]
+
+    response = instance._invoke_chat_model([HumanMessage(content="hi")], use_tools=False)
+
+    assert response.content == "fallback answer"
+
+
+def test_invoke_chat_model_raises_readable_error_when_all_backends_fail():
+    instance = _agent_instance()
+    instance.model_backends = [
+        SimpleNamespace(
+            label="openai:gpt-4.1-mini",
+            base_url="https://api.openai.com/v1",
+            model=SimpleNamespace(invoke=lambda messages: (_ for _ in ()).throw(RuntimeError("timed out"))),
+            tool_model=SimpleNamespace(invoke=lambda messages: (_ for _ in ()).throw(RuntimeError("timed out"))),
+        )
+    ]
+
+    with pytest.raises(agent_mod.ModelServiceError, match="All configured chat models failed"):
+        instance._invoke_chat_model([HumanMessage(content="hi")], use_tools=True)
 
 
 def test_run_uses_graph_invoke_and_returns_answer():
@@ -192,6 +260,8 @@ def test_parse_args_reads_cli_flags(monkeypatch):
         "--question",
         "What is this?",
         "--skip-index",
+        "--chat-provider",
+        "openai",
         "--chat-model",
         "demo-model",
     ])
@@ -201,6 +271,7 @@ def test_parse_args_reads_cli_flags(monkeypatch):
     assert args.repository == "repo"
     assert args.question == "What is this?"
     assert args.skip_index is True
+    assert args.chat_provider == "openai"
     assert args.chat_model == "demo-model"
 
 

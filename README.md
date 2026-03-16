@@ -49,10 +49,14 @@ docker run -d --name qdrant -p 6333:6333 -v qdrant_storage:/qdrant/storage qdran
 Create `.env` from `.env.example`, then set the required values:
 
 - `NODIFYCTX_CHAT_MODEL`
+- `NODIFYCTX_CHAT_PROVIDER` to select `lmstudio`, `openai-compatible`, `openai`, `deepseek`, or `anthropic`/`claude`
 - `NODIFYCTX_EMBEDDING_MODEL`
 - `NODIFYCTX_CHAT_BASE_URL` and/or `NODIFYCTX_EMBEDDINGS_BASE_URL` (or use the single `NODIFYCTX_MODEL_BASE_URL` convenience variable)
-- `NODIFYCTX_MODEL_API_KEY` (or legacy `REPOCONTEXT_*` keys during migration)
-- `NODIFYCTX_MODEL_TIMEOUT_SECONDS` to fail fast when the local model endpoint is down or unreachable
+- `NODIFYCTX_MODEL_API_KEY` (single API key used for the configured provider)
+- `NODIFYCTX_MODEL_TIMEOUT_SECONDS` and `NODIFYCTX_MODEL_MAX_RETRIES` to control remote model latency and retries
+- `NODIFYCTX_FALLBACK_CHAT_MODEL` and optional fallback provider/base URL/key values if you want automatic provider failover
+- `NODIFYCTX_MODEL_TIMEOUT_SECONDS` and `NODIFYCTX_MODEL_MAX_RETRIES` to control remote model latency and retries
+- `NODIFYCTX_FALLBACK_CHAT_MODEL` and optional fallback provider/base URL/key values if you want automatic provider failover
 - `NODIFYCTX_QDRANT_URL` when using a running Qdrant container
 - `NODIFYCTX_MAX_TOOL_ITERATIONS` to control how many tool rounds the agent may use
 - `NODIFYCTX_GRAPH_RECURSION_LIMIT` to control the LangGraph recursion cap
@@ -107,10 +111,28 @@ If your chat and embeddings APIs are behind the same endpoint (e.g., a single LM
 python -m nodifyctx "/path/to/repository" --skip-index --model-base-url http://127.0.0.1:1234/v1 --question "Where is axios setup?"
 ```
 
-If your model endpoint is remote or occasionally unavailable, reduce the wait with an explicit timeout:
+Use OpenAI directly:
 
 ```bash
-python -m nodifyctx "/path/to/repository" --model-timeout-seconds 3
+python -m nodifyctx "/path/to/repository" --skip-index --chat-provider openai --chat-model gpt-4.1-mini --model-api-key "$OPENAI_API_KEY" --question "Where is axios setup?"
+```
+
+Use DeepSeek directly:
+
+```bash
+python -m nodifyctx "/path/to/repository" --skip-index --chat-provider deepseek --chat-model deepseek-chat --model-api-key "$DEEPSEEK_API_KEY" --question "Where is axios setup?"
+```
+
+Use Claude directly:
+
+```bash
+python -m nodifyctx "/path/to/repository" --skip-index --chat-provider anthropic --chat-model claude-3-7-sonnet-latest --model-api-key "$ANTHROPIC_API_KEY" --question "Where is axios setup?"
+```
+
+If your model endpoint is remote or occasionally unavailable, increase the wait, add retries, or configure a fallback model:
+
+```bash
+python -m nodifyctx "/path/to/repository" --model-timeout-seconds 60 --model-max-retries 4 --fallback-chat-model deepseek-chat --fallback-chat-provider deepseek
 ```
 
 ## Testing A Specific Project
@@ -184,7 +206,7 @@ This project was validated against a local test repository such as `~/example-re
 ## Troubleshooting
 
 - If the agent stops after printing raw `<tool_call>` text, that is a tool-calling compatibility issue between the model output and the runtime. The current runtime now includes a fallback parser for that output pattern, but models with stronger native tool calling still behave better.
-- If the agent hangs for a long time and eventually errors during an HTTP request to LM Studio, that is usually LLM service latency rather than graph traversal failure.
+- If the agent times out while calling OpenAI, DeepSeek, Claude, or LM Studio, the runtime now surfaces a short model-service error instead of a Python stack trace. Increase `NODIFYCTX_MODEL_TIMEOUT_SECONDS`, raise `NODIFYCTX_MODEL_MAX_RETRIES`, or configure `NODIFYCTX_FALLBACK_CHAT_MODEL` to fail over automatically.
 - For best results, prefer a model served through LM Studio that handles OpenAI-style tool calling reliably and keep `temperature=0`.
 - If you hit `GraphRecursionError`, raise `NODIFYCTX_GRAPH_RECURSION_LIMIT` in `.env`. Example: `NODIFYCTX_GRAPH_RECURSION_LIMIT=200`.
 - If you want to remove the practical recursion cap, set `NODIFYCTX_GRAPH_RECURSION_LIMIT=0`, `none`, or `unlimited`. The runtime maps that to a very large limit because LangGraph still expects an integer.

@@ -23,6 +23,7 @@ def test_graph_store_config_uses_nodifyctx_defaults(tmp_path: Path, monkeypatch)
 
 def test_agent_runtime_config_accepts_legacy_environment(monkeypatch) -> None:
     monkeypatch.delenv("NODIFYCTX_CHAT_BASE_URL", raising=False)
+    monkeypatch.delenv("NODIFYCTX_CHAT_PROVIDER", raising=False)
     monkeypatch.delenv("NODIFYCTX_MODEL_API_KEY", raising=False)
     monkeypatch.delenv("NODIFYCTX_MODEL_TIMEOUT_SECONDS", raising=False)
     monkeypatch.setenv("REPOCONTEXT_CHAT_BASE_URL", "http://legacy-chat")
@@ -32,8 +33,25 @@ def test_agent_runtime_config_accepts_legacy_environment(monkeypatch) -> None:
     config = AgentRuntimeConfig(chat_model="local-model")
 
     assert config.chat_base_url == "http://legacy-chat"
+    assert config.chat_provider == "openai-compatible"
     assert config.model_api_key == "legacy-key"
     assert config.model_timeout_seconds == 3.5
+
+
+def test_agent_runtime_config_resolves_provider_specific_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("NODIFYCTX_CHAT_BASE_URL", raising=False)
+    monkeypatch.delenv("NODIFYCTX_MODEL_BASE_URL", raising=False)
+    monkeypatch.delenv("NODIFYCTX_MODEL_API_KEY", raising=False)
+    monkeypatch.delenv("NODIFYCTX_LMSTUDIO_BASE_URL", raising=False)
+    monkeypatch.delenv("REPOCONTEXT_CHAT_BASE_URL", raising=False)
+    monkeypatch.delenv("REPOCONTEXT_MODEL_BASE_URL", raising=False)
+    monkeypatch.setenv("NODIFYCTX_MODEL_API_KEY", "deepseek-key")
+
+    config = AgentRuntimeConfig(chat_model="deepseek-chat", chat_provider="deepseek")
+
+    assert config.chat_provider == "deepseek"
+    assert config.chat_base_url == "https://api.deepseek.com/v1"
+    assert config.model_api_key == "deepseek-key"
 
 
 def test_configure_environment_sets_new_and_legacy_names(tmp_path: Path, monkeypatch) -> None:
@@ -43,12 +61,18 @@ def test_configure_environment_sets_new_and_legacy_names(tmp_path: Path, monkeyp
         repository=str(repository),
         question=None,
         chat_model="chat-model",
+        chat_provider="openai",
         embedding_model="embed-model",
         chat_base_url="http://chat",
         embeddings_base_url="http://embed",
         model_base_url=None,
         model_api_key="model-key",
         model_timeout_seconds=7.0,
+        model_max_retries=4,
+        fallback_chat_model="deepseek-chat",
+        fallback_chat_provider="deepseek",
+        fallback_chat_base_url="https://api.deepseek.com/v1",
+        fallback_model_api_key="deepseek-key",
         neo4j_uri="bolt://db",
         neo4j_username="neo",
         neo4j_password="secret",
@@ -71,9 +95,15 @@ def test_configure_environment_sets_new_and_legacy_names(tmp_path: Path, monkeyp
     expected_repository = str(repository.resolve())
     assert os.environ["NODIFYCTX_REPOSITORY_PATH"] == expected_repository
     assert os.environ["NODIFYCTX_CHAT_MODEL"] == "chat-model"
+    assert os.environ["NODIFYCTX_CHAT_PROVIDER"] == "openai"
     assert os.environ["NODIFYCTX_MODEL_TIMEOUT_SECONDS"] == "7.0"
+    assert os.environ["NODIFYCTX_MODEL_MAX_RETRIES"] == "4"
+    assert os.environ["NODIFYCTX_FALLBACK_CHAT_MODEL"] == "deepseek-chat"
+    assert os.environ["NODIFYCTX_FALLBACK_CHAT_PROVIDER"] == "deepseek"
     assert os.environ["NODIFYCTX_QDRANT_COLLECTION"] == "nodify_ctx_nodes__scope-a"
     assert os.environ["REPOCONTEXT_REPOSITORY_PATH"] == expected_repository
     assert os.environ["REPOCONTEXT_CHAT_MODEL"] == "chat-model"
+    assert os.environ["REPOCONTEXT_CHAT_PROVIDER"] == "openai"
     assert os.environ["REPOCONTEXT_MODEL_TIMEOUT_SECONDS"] == "7.0"
+    assert os.environ["REPOCONTEXT_MODEL_MAX_RETRIES"] == "4"
     assert os.environ["REPOCONTEXT_QDRANT_COLLECTION"] == "nodify_ctx_nodes__scope-a"
